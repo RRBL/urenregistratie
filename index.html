@@ -30,18 +30,22 @@ th:last-child,td:last-child{width:100px}
 .kpi small{display:block;color:var(--muted);font-weight:700;margin-bottom:5px}.kpi strong{font-size:22px}
 .note{padding:0 24px 22px;color:var(--muted);font-size:12px}
 
-.job-mobile{display:none}
+.job-mobile{display:none}.job-row-hidden{display:none}.add-job-wrap{display:flex;justify-content:center;padding:10px 0 2px}.add-job-btn{width:44px;height:44px;border-radius:50%;font-size:28px;line-height:1;padding:0;color:var(--accent);background:#fff;border:2px solid var(--accent)}
 @media(max-width:760px){
   #jobsTable{display:none}
   .job-mobile{display:block}
   .job-card{border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0;background:#fff}
   .job-card-title{font-weight:800;margin-bottom:8px}
-  .job-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .job-grid label{font-size:11px;margin:0}
-  .job-grid input{width:100%;box-sizing:border-box}
+  .job-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--line);margin-top:10px}
+  .job-grid > div{min-width:0;border-right:1px solid var(--line)}
+  .job-grid > div:last-child{border-right:0}
+  .job-grid label{display:block;text-align:center;font-size:11px;font-weight:700;margin:0;padding:7px 2px;background:#f5f7f9;border-bottom:1px solid var(--line)}
+  .job-grid input{width:100%;box-sizing:border-box;border:0;border-radius:0;text-align:center;padding:9px 2px;background:#fff}
   .job-mobile .job-mobile-total{text-align:right;font-weight:800;margin-top:8px}
+  .add-job-wrap{margin-top:8px}
+  .add-job-btn{width:42px;height:42px}
 }
-@media(max-width:760px){.meta{grid-template-columns:1fr 1fr}.meta label:first-child{grid-column:auto}.summary{grid-template-columns:1fr 1fr}.app{margin-top:12px}.title{font-size:20px}}
+@media(max-width:760px){.meta{grid-template-columns:1fr}.meta label:first-child{grid-column:auto}.summary{grid-template-columns:1fr 1fr}.app{margin-top:12px}.title{font-size:20px}}
 @media print{body{background:#fff}.app{margin:0;max-width:none}.toolbar{display:none}.card{border:0;box-shadow:none}.sheet{padding-bottom:0}.summary,.note{break-inside:avoid}}
 </style>
 </head>
@@ -98,10 +102,10 @@ th:last-child,td:last-child{width:100px}
           </tr>
         </tfoot>
       </table>
-
       <div class="job-mobile" id="jobsMobile"></div>
+      <div class="add-job-wrap"><button type="button" class="add-job-btn" id="addJobBtn" aria-label="Klus toevoegen" title="Klus toevoegen">+</button></div>
       <div class="note" style="padding:10px 0 4px">
-        Je kunt per klus het adres invullen en per dag de gewerkte uren noteren. Meerdere klussen op één dag zijn mogelijk.
+        Je kunt per klus het adres invullen en per dag de gewerkte uren noteren. Er is standaard één klusregel zichtbaar. Gebruik het plusje onder de klus om extra klussen toe te voegen. Meerdere klussen op één dag zijn mogelijk.
       </div>
 
       <div class="section">Overige uren / correcties</div>
@@ -155,19 +159,47 @@ function jobRow(i){
 }
 jobsBody.innerHTML=Array.from({length:10},(_,i)=>jobRow(i)).join("");
 const jobsMobile=document.getElementById("jobsMobile");
+let visibleJobs=1;
 function buildMobileJobs(){
   const days=["Ma","Di","Woe","Do","Vrij","Za"];
   jobsMobile.innerHTML=Array.from({length:10},(_,i)=>`
     <div class="job-card">
       <div class="job-card-title">Klus ${i+1}</div>
       <input class="jobname mobile-jobname" data-row="${i}" type="text" placeholder="Adres / klus">
-      <div class="job-grid">
-        ${days.map((d,k)=>`<div><label>${d}</label><input class="num mobile-jobhour" data-row="${i}" data-day="${k}" type="number" min="0" step=".25" value="0"></div>`).join("")}
+      <div class="job-grid" role="table" aria-label="Uren per dag">
+        ${days.map((d,k)=>`<div role="cell"><label>${d}</label><input aria-label="${d} uren" class="num mobile-jobhour" data-row="${i}" data-day="${k}" type="number" min="0" step=".25" value="0"></div>`).join("")}
       </div>
       <div class="job-mobile-total">Totaal: <span class="mobile-jobtotal">0</span> uur</div>
     </div>`).join("");
 }
 buildMobileJobs();
+
+function setVisibleJobs(count){
+  visibleJobs=Math.max(1,Math.min(10,count));
+  document.querySelectorAll("#jobsBody tr").forEach((tr,i)=>{
+    tr.classList.toggle("job-row-hidden", i>=visibleJobs);
+  });
+  document.querySelectorAll("#jobsMobile .job-card").forEach((card,i)=>{
+    card.style.display = i<visibleJobs ? "" : "none";
+  });
+  const btn=document.getElementById("addJobBtn");
+  if(btn){
+    btn.disabled=visibleJobs>=10;
+    btn.style.opacity=visibleJobs>=10 ? ".45" : "1";
+  }
+}
+
+function addJob(){
+  if(visibleJobs<10){
+    setVisibleJobs(visibleJobs+1);
+    const row=document.querySelectorAll("#jobsBody tr")[visibleJobs-1];
+    const input=row?.querySelector(".jobname");
+    if(input) input.focus();
+  }
+}
+
+document.getElementById("addJobBtn").addEventListener("click",addJob);
+setVisibleJobs(1);
 
 function syncMobileJobs(){
   const desktopRows=[...document.querySelectorAll("#jobsBody tr")];
@@ -320,7 +352,14 @@ function loadForm(){
     document.getElementById("week").value=d.week||"";
     document.getElementById("datum").value=d.datum||"";
 
-    (d.jobs||[]).forEach((j,i)=>{
+    const savedJobs=d.jobs||[];
+    const neededJobs=Math.max(1, Math.min(10, savedJobs.reduce((n,j,i)=>{
+      const hasName=String(j.name||"").trim().length>0;
+      const hasHours=(j.hours||[]).some(v=>(parseFloat(v)||0)>0);
+      return (hasName||hasHours) ? Math.max(n,i+1) : n;
+    },1)));
+    setVisibleJobs(neededJobs);
+    savedJobs.forEach((j,i)=>{
       const tr=document.querySelectorAll("#jobsBody tr")[i];
       if(!tr)return;
       tr.querySelector(".jobname").value=j.name||"";
@@ -520,11 +559,12 @@ function resetForm(){
   document.querySelectorAll(".jobhour,.mobile-jobhour,.e,.c,.absenceHour").forEach(x=>x.value=0);
 
   try{localStorage.removeItem("blaco-urenlijst");}catch(e){}
+  setVisibleJobs(1);
   calc();
   syncMobileJobs();
   window.alert("De weekgegevens zijn gewist.");
 }
 
-loadForm(); calc(); syncMobileJobs();</script>
+loadForm(); setVisibleJobs(visibleJobs); calc(); syncMobileJobs();</script>
 </body>
 </html>
