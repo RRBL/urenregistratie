@@ -307,6 +307,630 @@ function contractSchedule(){
 }
 function calc(){
   const schedule=contractSchedule();
+  const contractField=document.getElementById("contracturen");
+  // Contracturen is a separate, manually editable field.
+  // Do not overwrite it when the daily schedule changes.
+  const contract = val(contractField);
+  document.getElementById("plannedTotal").textContent=fmt(contract);
+
+  let daily=[0,0,0,0,0,0];
+  const rows=[...document.querySelectorAll("#jobsBody tr")];
+  rows.forEach(tr=>{
+    let t=0;
+    tr.querySelectorAll(".jobhour").forEach((e,d)=>{
+      const x=val(e); t+=x; daily[d]+=x;
+    });
+    tr.querySelector(".jobtotal").textContent=fmt(t);
+  });
+  daily.forEach((x,d)=>{
+    document.querySelector(`.dayTotal[data-day="${d}"]`).textContent=fmt(x);
+  });
+
+  const h=daily.reduce((a,b)=>a+b,0);
+  const e=sumSimple(".e"), c=sumSimple(".c");
+  document.getElementById("hoursTotal").textContent=fmt(h);
+  document.getElementById("extraTotal").textContent=fmt(e);
+  document.getElementById("corrTotal").textContent=fmt(c);
+
+  let absTotal=0;
+  absenceTypes.forEach((_,i)=>{
+    let total=0;
+    document.querySelectorAll(".a"+i).forEach(el=>{ total += val(el); });
+    document.querySelector(".at"+i).textContent=fmt(total);
+    absTotal+=total;
+  });
+
+  const overtime=(h+e+c+absTotal)-contract;
+  document.getElementById("overtime").textContent=fmt(overtime);
+  document.getElementById("kpiHours").textContent=fmt(h);
+  document.getElementById("kpiExtra").textContent=fmt(e);
+  document.getElementById("kpiAbsence").textContent=fmt(absTotal);
+  document.getElementById("kpiOvertime").textContent=fmt(overtime);
+}
+function sumSimple(sel){return [...document.querySelectorAll(sel)].reduce((s,e)=>s+val(e),0)}
+
+document.addEventListener("input",calc);
+document.addEventListener("change",calc);
+
+document.getElementById("datum").addEventListener("change",function(){
+  if(!this.value)return;
+  const d=new Date(this.value+"T12:00:00");
+  const day=(d.getDay()+6)%7;
+  d.setDate(d.getDate()-day+3);
+  const first=new Date(d.getFullYear(),0,4);
+  document.getElementById("week").value=1+Math.round((d-first)/604800000);
+});
+
+function saveForm(){
+  const personal={
+    naam:document.getElementById("naam").value,
+    contracturen:document.getElementById("contracturen").value,
+    planned:[...document.querySelectorAll(".plannedInput")].map(x=>x.value)
+  };
+  localStorage.setItem("blaco-urenlijst-personal",JSON.stringify(personal));
+
+  const data={
+    week:document.getElementById("week").value,
+    datum:document.getElementById("datum").value,
+    jobs:[...document.querySelectorAll("#jobsBody tr")].map(tr=>({
+      name:tr.querySelector(".jobname").value,
+      hours:[...tr.querySelectorAll(".jobhour")].map(x=>x.value)
+    })),
+    extra:[...document.querySelectorAll(".e")].map(x=>x.value),
+    corr:[...document.querySelectorAll(".c")].map(x=>x.value),
+    absence:[...document.querySelectorAll(".absenceHour")].map(x=>x.value)
+  };
+  localStorage.setItem("blaco-urenlijst",JSON.stringify(data));
+  alert("Urenlijst opgeslagen.");
+}
+
+function loadForm(){
+  const pRaw=localStorage.getItem("blaco-urenlijst-personal");
+  if(pRaw)try{
+    const p=JSON.parse(pRaw);
+    document.getElementById("naam").value=p.naam||"";
+    document.getElementById("contracturen").value=p.contracturen||"";
+    // planned hours are the editable personal contract schedule.
+    if(Array.isArray(p.planned)){
+      p.planned.forEach((v,i)=>{
+        const el=document.querySelectorAll(".plannedInput")[i];
+        if(el)el.value=v;
+      });
+    } else if(p.contracturen){
+    }
+  }catch(e){}
+
+  const raw=localStorage.getItem("blaco-urenlijst");
+  if(!raw){calc();return}
+  try{
+    const d=JSON.parse(raw);
+    document.getElementById("week").value=d.week||"";
+    document.getElementById("datum").value=d.datum||"";
+
+    const savedJobs=d.jobs||[];
+    const neededJobs=Math.max(1, Math.min(10, savedJobs.reduce((n,j,i)=>{
+      const hasName=String(j.name||"").trim().length>0;
+      const hasHours=(j.hours||[]).some(v=>(parseFloat(String(v).replace(",", "."))||0)>0);
+      return (hasName||hasHours) ? Math.max(n,i+1) : n;
+    },1)));
+    setVisibleJobs(neededJobs);
+    savedJobs.forEach((j,i)=>{
+      const tr=document.querySelectorAll("#jobsBody tr")[i];
+      if(!tr)return;
+      tr.querySelector(".jobname").value=j.name||"";
+      (j.hours||[]).forEach((v,k)=>{
+        const el=tr.querySelectorAll(".jobhour")[k];
+        if(el)el.value=v;
+      });
+    });
+    (d.extra||[]).forEach((v,i)=>{const e=document.querySelectorAll(".e")[i];if(e)e.value=v});
+    (d.corr||[]).forEach((v,i)=>{const e=document.querySelectorAll(".c")[i];if(e)e.value=v});
+    (d.absence||[]).forEach((v,i)=>{const e=document.querySelectorAll(".absenceHour")[i];if(e)e.value=v});
+  }catch(e){}
+  calc();
+}
+
+function reportData(){
+  const naam=document.getElementById("naam").value.trim();
+  const week=document.getElementById("week").value.trim();
+  const datum=document.getElementById("datum").value;
+  const contract=document.getElementById("contracturen").value;
+  const days=["Ma","Di","Woe","Do","Vrij","Za"];
+
+  const jobs=[...document.querySelectorAll("#jobsBody tr")].map((tr,i)=>{
+    const name=tr.querySelector(".jobname").value.trim();
+    const hours=[...tr.querySelectorAll(".jobhour")].map(x=>val(x));
+    return {name:name || `Klus ${i+1}`, hours};
+  }).filter(j=>j.name || j.hours.some(x=>x>0));
+
+  const abs=absenceTypes.map((type,i)=>({
+    type,
+    hours:[...document.querySelectorAll(".a"+i)].map(x=>val(x))
+  })).filter(a=>a.hours.some(x=>x>0));
+
+  return {
+    naam,week,datum,contract,days,jobs,abs,
+    extra:sumSimple(".e"),
+    correction:sumSimple(".c"),
+    worked:document.getElementById("hoursTotal").textContent,
+    absence:document.getElementById("kpiAbsence").textContent,
+    overtime:document.getElementById("kpiOvertime").textContent,
+    planned:[...document.querySelectorAll(".plannedInput")].map(x=>val(x)),
+    plannedTotal:document.getElementById("plannedTotal").textContent
+  };
+}
+
+function buildReportHtml(){
+  const d=reportData();
+  const esc=s=>String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+  let jobs=d.jobs.map(j=>`<tr><td>${esc(j.name)}</td>${j.hours.map(h=>`<td>${h||""}</td>`).join("")}<td>${fmt(j.hours.reduce((a,b)=>a+b,0))}</td></tr>`).join("");
+  let abs=d.abs.map(a=>`<tr><td>${esc(a.type)}</td>${a.hours.map(h=>`<td>${h||""}</td>`).join("")}<td>${fmt(a.hours.reduce((a,b)=>a+b,0))}</td></tr>`).join("");
+
+  return `<!doctype html><html lang="nl"><head><meta charset="utf-8">
+<title>Urenregistratie - ${esc(d.naam||"medewerker")} - week ${esc(d.week||"")}</title>
+<style>
+body{font-family:Arial,sans-serif;color:#17212b;margin:30px}
+h1{font-size:22px}h2{font-size:16px;margin-top:28px}
+.meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0 24px}
+.meta div{border:1px solid #ddd;padding:9px}.label{font-size:11px;color:#667085;font-weight:bold}
+table{border-collapse:collapse;width:100%;margin:10px 0 20px}th,td{border:1px solid #ccd3da;padding:7px;text-align:center}th:first-child,td:first-child{text-align:left}th{background:#eef1f4}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.box{border:1px solid #ddd;padding:10px}.box b{display:block;font-size:20px;margin-top:4px}
+@media print{body{margin:15mm}}
+</style></head><body>
+<h1>URENREGISTRATIE — SCHILDERSBEDRIJF VAN AS</h1>
+<div class="meta">
+<div><span class="label">Naam medewerker</span><br>${esc(d.naam||"-")}</div>
+<div><span class="label">Contracturen per week</span><br>${esc(d.contract||"-")}</div>
+<div><span class="label">Datum</span><br>${esc(d.datum||"-")}</div>
+<div><span class="label">Weeknummer</span><br>${esc(d.week||"-")}</div>
+</div>
+<h2>Klusregistratie</h2>
+<table><thead><tr><th>Klus / adres</th>${d.days.map(x=>`<th>${x}</th>`).join("")}<th>Totaal</th></tr></thead>
+<tbody>${jobs || '<tr><td colspan="8">Geen klussen ingevuld</td></tr>'}</tbody>
+<tfoot><tr><th>Totaal gewerkt</th>${d.days.map((_,i)=>`<th>${fmt([...document.querySelectorAll("#jobsBody tr")].reduce((s,tr)=>s+val(tr.querySelectorAll(".jobhour")[i]),0))}</th>`).join("")}<th>${esc(d.worked)}</th></tr>
+<tr><th>Normale contracturen</th>${d.planned.map(x=>`<th>${fmt(x)}</th>`).join("")}<th>${esc(d.plannedTotal)}</th></tr></tfoot></table>
+
+<h2>Bijzonder verlof / afwezigheid</h2>
+<table><thead><tr><th>Type</th>${d.days.map(x=>`<th>${x}</th>`).join("")}<th>Totaal</th></tr></thead>
+<tbody>${abs || '<tr><td colspan="8">Geen afwezigheid ingevuld</td></tr>'}</tbody></table>
+
+<h2>Overige uren / correcties</h2>
+<table><tbody>
+<tr><td>Extra uren</td><td colspan="6">${fmt(d.extra)}</td></tr>
+<tr><td>Correctie</td><td colspan="6">${fmt(d.correction)}</td></tr>
+</tbody></table>
+
+<h2>Samenvatting</h2>
+<div class="summary">
+<div class="box">Gewerkte uren<b>${esc(d.worked)}</b></div>
+<div class="box">Afwezigheid<b>${esc(d.absence)}</b></div>
+<div class="box">Extra uren<b>${fmt(d.extra)}</b></div>
+<div class="box">Saldo overuren<b>${esc(d.overtime)}</b></div>
+</div>
+<p style="margin-top:28px;color:#667085;font-size:12px">Gegenereerd vanuit de urenregistratie-app.</p>
+</body></html>`;
+}
+
+function buildEmail(){
+  const d=reportData();
+  const subject=`Urenregistratie${d.naam ? " - " + d.naam : ""}${d.week ? " - week " + d.week : ""}`;
+  let body=`URENREGISTRATIE - SCHILDERSBEDRIJF VAN AS\n\nNaam medewerker: ${d.naam||"-"}\nContracturen per week: ${d.contract||"-"}\nDatum: ${d.datum||"-"}\nWeeknummer: ${d.week||"-"}\n\n`;
+  body+=`Totaal gewerkt: ${d.worked}\nTotaal afwezigheid: ${d.absence}\nSaldo overuren: ${d.overtime}\n\n`;
+  body+=`Er is een volledig urenregistratiebestand aangemaakt. Voeg het gedownloade bestand als bijlage toe aan deze e-mail.`;
+  return {subject,body};
+}
+
+async function sendForm(){
+  const report=buildReportHtml();
+  const d=reportData();
+  const filename=`urenregistratie_${(d.naam||"medewerker").replace(/[^a-z0-9_-]/gi,"_")}_week_${d.week||"onbekend"}.html`;
+  const file=new File([report],filename,{type:"text/html"});
+
+  // On supported phones/browsers, the Share sheet can hand the file directly to Mail.
+  if(navigator.share && navigator.canShare){
+    try{
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({
+          files:[file],
+          title:"Urenregistratie",
+          text:"Urenregistratie voor de administratie"
+        });
+        return;
+      }
+    }catch(e){
+      if(e && e.name==="AbortError") return;
+    }
+  }
+
+  // Fallback: download the complete report, then open the mail app.
+  const url=URL.createObjectURL(file);
+  const a=document.createElement("a");
+  a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+
+  const email=buildEmail();
+  const mailto="mailto:info@schildersbedrijfvanas.nl?subject="+encodeURIComponent(email.subject)+"&body="+encodeURIComponent(email.body);
+  window.open(mailto,"_self");
+  setTimeout(()=>showAttachmentDialog(filename),800);
+}
+
+function showAttachmentDialog(filename){
+  let box=document.getElementById("attachmentDialog");
+  if(box)box.remove();
+  box=document.createElement("div");
+  box.id="attachmentDialog";
+  box.style.cssText="position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999";
+  box.innerHTML=`<div style="background:white;max-width:560px;width:100%;border-radius:14px;padding:22px;box-shadow:0 12px 40px #0004">
+    <h2 style="margin-top:0">Urenbestand aangemaakt</h2>
+    <p>Het volledige urenbestand is gedownload als:</p>
+    <p><b>${filename}</b></p>
+    <p>Voeg dit bestand als bijlage toe aan de e-mail. Op een telefoon kun je dit meestal via het deelmenu van het gedownloade bestand doen.</p>
+    <div style="text-align:right"><button type="button" onclick="this.closest('#attachmentDialog').remove()">Sluiten</button></div>
+  </div>`;
+  document.body.appendChild(box);
+}
+
+
+function showSendDialog(subject,body){
+  let box=document.getElementById("sendDialog");
+  if(!box){
+    box=document.createElement("div");
+    box.id="sendDialog";
+    box.style.cssText="position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:20px;z-index:9999";
+    box.innerHTML=`<div style="background:white;max-width:620px;width:100%;max-height:85vh;overflow:auto;border-radius:14px;padding:22px;box-shadow:0 12px 40px #0004">
+      <h2 style="margin-top:0">E-mail verzenden</h2>
+      <p>De mail-app kon niet automatisch worden geopend. Kopieer eventueel onderstaande gegevens naar je e-mailprogramma.</p>
+      <label>Onderwerp</label>
+      <input id="mailSubject" style="width:100%;padding:9px;margin:5px 0 12px;box-sizing:border-box">
+      <label>Bericht</label>
+      <textarea id="mailBody" style="width:100%;height:280px;padding:9px;box-sizing:border-box;font:inherit"></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button onclick="document.getElementById('sendDialog').remove()">Sluiten</button>
+        <button class="primary" onclick="copyEmail()">Kopieer bericht</button>
+      </div>
+    </div>`;
+    document.body.appendChild(box);
+  }
+  document.getElementById("mailSubject").value=subject;
+  document.getElementById("mailBody").value=body;
+}
+
+function copyEmail(){
+  const text=`Onderwerp: ${document.getElementById("mailSubject").value}\n\n${document.getElementById("mailBody").value}`;
+  navigator.clipboard?.writeText(text).then(
+    ()=>alert("Het bericht is gekopieerd."),
+    ()=>alert("Selecteer en kopieer het bericht handmatig.")
+  );
+}
+
+
+
+function resetForm(){
+  if(!window.confirm("Alle ingevulde uren, klussen en afwezigheden wissen?\n\nNaam, contracturen en normale werkverdeling blijven behouden.")) return;
+
+  document.getElementById("datum").value="";
+  document.getElementById("week").value="";
+  document.querySelectorAll(".jobname,.mobile-jobname").forEach(x=>x.value="");
+  document.querySelectorAll(".jobhour,.mobile-jobhour,.e,.c,.absenceHour").forEach(x=>x.value=0);
+
+  try{localStorage.removeItem("blaco-urenlijst");}catch(e){}
+  setVisibleJobs(1);
+  calc();
+  syncMobileJobs();
+  window.alert("De weekgegevens zijn gewist.");
+}
+
+loadForm(); setVisibleJobs(visibleJobs); calc(); syncMobileJobs();</script>
+</body>
+</html><!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Urenregistratie — Schildersbedrijf Van As</title>
+<style>
+:root{--ink:#17212b;--muted:#64748b;--line:#d7dde5;--head:#eceff2;--accent:#1f5d8f;--bg:#f5f7f9;--white:#fff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink)}
+.app{max-width:1100px;margin:28px auto;padding:0 18px}.toolbar{display:flex;gap:10px;justify-content:flex-end;margin-bottom:12px}
+button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:9px 13px;font-weight:600;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.card{background:var(--white);border:1px solid var(--line);border-radius:14px;box-shadow:0 5px 18px #0000000b;overflow:hidden}
+.title{padding:22px 24px;border-bottom:1px solid var(--line);font-size:24px;font-weight:800;letter-spacing:.2px}
+.meta{display:grid;grid-template-columns:1fr 180px 180px 150px;gap:14px;padding:18px 24px}
+label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}
+input{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;background:#fff}
+.sheet{padding:0 24px 24px;overflow:auto}
+table{border-collapse:collapse;width:100%;min-width:720px;table-layout:fixed}
+th,td{border:1px solid var(--line);height:42px;padding:6px 8px}
+th{background:var(--head);font-size:13px}
+th:first-child,td:first-child{width:180px;text-align:left}
+th:last-child,td:last-child{width:100px}
+.num{width:100%;height:30px;border:1px solid transparent;border-radius:5px;text-align:center;font:inherit;background:transparent}
+.num:focus{outline:2px solid #8fb4d3;background:#fff}
+.total{font-weight:800;text-align:center;background:#f8fafc}
+.section{font-size:13px;font-weight:800;color:var(--muted);padding:18px 24px 8px}
+.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:0 24px 24px}
+.kpi{border:1px solid var(--line);border-radius:10px;padding:13px 14px;background:#fbfcfd}
+.kpi small{display:block;color:var(--muted);font-weight:700;margin-bottom:5px}.kpi strong{font-size:22px}
+.note{padding:0 24px 22px;color:var(--muted);font-size:12px}
+
+.job-mobile{display:none}.job-row-hidden{display:none}.add-job-wrap{display:flex;justify-content:center;padding:10px 0 2px}.add-job-btn{width:44px;height:44px;border-radius:50%;font-size:28px;line-height:1;padding:0;color:var(--accent);background:#fff;border:2px solid var(--accent)}
+@media(max-width:760px){
+  #jobsTable{display:none}
+  .job-mobile{display:block}
+  .job-card{border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0;background:#fff}
+  .job-card-title{font-weight:800;margin-bottom:8px}
+  .job-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border:1px solid var(--line);margin-top:10px}
+  .job-grid > div{min-width:0;border-right:1px solid var(--line)}
+  .job-grid > div:last-child{border-right:0}
+  .job-grid label{display:block;text-align:center;font-size:11px;font-weight:700;margin:0;padding:7px 2px;background:#f5f7f9;border-bottom:1px solid var(--line)}
+  .job-grid input{width:100%;box-sizing:border-box;border:0;border-radius:0;text-align:center;padding:9px 2px;background:#fff}
+  .job-mobile .job-mobile-total{text-align:right;font-weight:800;margin-top:8px}
+  .add-job-wrap{margin-top:8px}
+  .add-job-btn{width:42px;height:42px}
+}
+@media(max-width:760px){.meta{grid-template-columns:1fr}.meta label:first-child{grid-column:auto}.summary{grid-template-columns:1fr 1fr}.app{margin-top:12px}.title{font-size:20px}}
+@media print{body{background:#fff}.app{margin:0;max-width:none}.toolbar{display:none}.card{border:0;box-shadow:none}.sheet{padding-bottom:0}.summary,.note{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="toolbar">
+    <button onclick="window.print()">Afdrukken</button>
+    <button type="button" onclick="resetForm()">Leegmaken</button>
+    <button type="button" class="primary" onclick="sendForm()">Verzenden</button>
+    <button class="primary" onclick="saveForm()">Opslaan</button>
+  </div>
+
+  <div class="card">
+    <div class="title">URENREGISTRATIE&nbsp;&nbsp; SCHILDERSBEDRIJF VAN AS</div>
+
+    <div class="meta">
+      <div><label>Naam medewerker</label><input id="naam" placeholder="Naam medewerker"></div>
+      <div><label>Contracturen per week</label><input id="contracturen" type="text" inputmode="decimal" placeholder="Bijv. 23 of 23,5"></div>
+      <div><label>Datum</label><input id="datum" type="date"></div>
+      <div><label>Weeknummer</label><input id="week" type="number" min="1" max="53" placeholder="Week"></div>
+    </div>
+
+    <div class="sheet">
+      <div class="section">Klusregistratie</div>
+      <table id="jobsTable">
+        <thead>
+          <tr>
+            <th>Klus / adres</th>
+            <th>Ma</th><th>Di</th><th>Woe</th><th>Do</th><th>Vrij</th><th>Za</th>
+            <th>TOTAAL</th>
+          </tr>
+        </thead>
+        <tbody id="jobsBody"></tbody>
+        <tfoot>
+          <tr>
+            <td><strong>Totaal gewerkt</strong></td>
+            <td class="total dayTotal" data-day="0">0</td>
+            <td class="total dayTotal" data-day="1">0</td>
+            <td class="total dayTotal" data-day="2">0</td>
+            <td class="total dayTotal" data-day="3">0</td>
+            <td class="total dayTotal" data-day="4">0</td>
+            <td class="total dayTotal" data-day="5">0</td>
+            <td class="total" id="hoursTotal">0</td>
+          </tr>
+          <tr>
+            <td><strong>Normale contracturen</strong></td>
+            <td class="total"><input class="num plannedInput" data-day="0" type="text" inputmode="decimal" value="0"></td>
+            <td class="total"><input class="num plannedInput" data-day="1" type="text" inputmode="decimal" value="7.5"></td>
+            <td class="total"><input class="num plannedInput" data-day="2" type="text" inputmode="decimal" value="4"></td>
+            <td class="total"><input class="num plannedInput" data-day="3" type="text" inputmode="decimal" value="7.5"></td>
+            <td class="total"><input class="num plannedInput" data-day="4" type="text" inputmode="decimal" value="4"></td>
+            <td class="total"><input class="num plannedInput" data-day="5" type="text" inputmode="decimal" value="0"></td>
+            <td class="total" id="plannedTotal">23</td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="job-mobile" id="jobsMobile"></div>
+      <div class="add-job-wrap"><button type="button" class="add-job-btn" id="addJobBtn" aria-label="Klus toevoegen" title="Klus toevoegen">+</button></div>
+      <div class="note" style="padding:10px 0 4px">
+        Je kunt per klus het adres invullen en per dag de gewerkte uren noteren. Er is standaard één klusregel zichtbaar. Gebruik het plusje onder de klus om extra klussen toe te voegen. Uren kunnen ook als halve uren worden ingevuld, bijvoorbeeld 7,5. Meerdere klussen op één dag zijn mogelijk.
+      </div>
+
+      <div class="section">Overige uren / correcties</div>
+      <table>
+        <tbody>
+          <tr><td>Extra uren</td><td><input class="num e" type="text" inputmode="decimal" value="0"></td><td colspan="5"></td><td class="total" id="extraTotal">0</td></tr>
+          <tr><td>Correctie</td><td><input class="num c" type="text" inputmode="decimal" value="0"></td><td colspan="5"></td><td class="total" id="corrTotal">0</td></tr>
+        </tbody>
+      </table>
+
+      <div class="section">Bijzonder verlof / afwezigheid</div>
+      <table>
+        <thead><tr><th>Type</th><th>Ma</th><th>Di</th><th>Woe</th><th>Do</th><th>Vrij</th><th>Za</th><th>TOTAAL UREN</th></tr></thead>
+        <tbody id="absenceBody"></tbody>
+      </table>
+      <div class="note" style="padding:10px 0 4px">
+        Vul per dag het aantal uren in. Bijvoorbeeld: vrijdag vrij = 4 uur bij Vakantiedagen. De normale contracturen hierboven blijven bewaard wanneer je op Leegmaken klikt en zijn per dag apart aan te passen.
+      </div>
+
+      <div class="section">Spaaruren</div>
+      <table>
+        <tbody>
+          <tr><td>Opname spaaruren</td><td colspan="6"></td><td class="total"><input id="saving" class="num" type="text" inputmode="decimal" value="0"></td></tr>
+          <tr><td>Overuren</td><td colspan="6"></td><td class="total" id="overtime">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="summary">
+      <div class="kpi"><small>Gewerkte uren</small><strong id="kpiHours">0</strong></div>
+      <div class="kpi"><small>Extra uren</small><strong id="kpiExtra">0</strong></div>
+      <div class="kpi"><small>Afwezigheid</small><strong id="kpiAbsence">0</strong></div>
+      <div class="kpi"><small>Saldo overuren</small><strong id="kpiOvertime">0</strong></div>
+    </div>
+    <div class="note">De gegevens worden alleen lokaal in deze browser opgeslagen wanneer je op <b>Opslaan</b> klikt.</div>
+  </div>
+</div>
+
+
+<script>
+const STORAGE_KEY = "vanas_urenregistratie_week_v13";
+
+function saveAppState(){
+  try{
+    const state = {};
+    document.querySelectorAll("input, textarea, select").forEach((el, i) => {
+      if(el.id) state["id:"+el.id] = el.value;
+      else if(el.name) state["name:"+el.name] = el.value;
+    });
+    state.jobs = Array.from(document.querySelectorAll("#jobsBody .jobRow")).map(row => ({
+      address: row.querySelector(".jobaddress")?.value || "",
+      hours: Array.from(row.querySelectorAll(".jobhour")).map(x => x.value)
+    }));
+    state.savedAt = new Date().toISOString();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  }catch(e){ return false; }
+}
+
+function restoreAppState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return false;
+    const state = JSON.parse(raw);
+    Object.entries(state).forEach(([key, value]) => {
+      if(key === "jobs" || key === "savedAt") return;
+      const sel = key.startsWith("id:") ? "#"+CSS.escape(key.slice(3)) :
+                  key.startsWith("name:") ? `[name="${CSS.escape(key.slice(5))}"]` : null;
+      if(sel){
+        const el = document.querySelector(sel);
+        if(el && typeof value === "string") el.value = value;
+      }
+    });
+    return true;
+  }catch(e){ return false; }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  // Restore ordinary fields once the page is loaded.
+  setTimeout(() => {
+    restoreAppState();
+    if(typeof calc === "function") calc();
+  }, 50);
+});
+
+// Save automatically whenever the user changes an input.
+// This means a colleague can close the page and continue the next day.
+document.addEventListener("input", () => {
+  clearTimeout(window.__saveTimer);
+  window.__saveTimer = setTimeout(saveAppState, 150);
+});
+document.addEventListener("change", saveAppState);
+</script>
+
+<script>
+const absenceTypes=["Ziek","Vakantiedagen","ATV - dagen","Feestdagen","Cursus / School"];
+const plannedDefault=[0,7.5,4,7.5,4,0];
+const jobsBody=document.getElementById("jobsBody");
+const abs=document.getElementById("absenceBody");
+
+function jobRow(i){
+  return `<tr>
+    <td><input class="jobname" type="text" placeholder="Adres / klus"></td>
+    ${Array.from({length:6},(_,d)=>`<td><input class="num jobhour" data-day="${d}" type="text" inputmode="decimal" value="0"></td>`).join("")}
+    <td class="total jobtotal">0</td>
+  </tr>`;
+}
+jobsBody.innerHTML=Array.from({length:10},(_,i)=>jobRow(i)).join("");
+const jobsMobile=document.getElementById("jobsMobile");
+let visibleJobs=1;
+function buildMobileJobs(){
+  const days=["Ma","Di","Woe","Do","Vrij","Za"];
+  jobsMobile.innerHTML=Array.from({length:10},(_,i)=>`
+    <div class="job-card">
+      <div class="job-card-title">Klus ${i+1}</div>
+      <input class="jobname mobile-jobname" data-row="${i}" type="text" placeholder="Adres / klus">
+      <div class="job-grid" role="table" aria-label="Uren per dag">
+        ${days.map((d,k)=>`<div role="cell"><label>${d}</label><input aria-label="${d} uren" class="num mobile-jobhour" data-row="${i}" data-day="${k}" type="text" inputmode="decimal" value="0"></div>`).join("")}
+      </div>
+      <div class="job-mobile-total">Totaal: <span class="mobile-jobtotal">0</span> uur</div>
+    </div>`).join("");
+}
+buildMobileJobs();
+
+function setVisibleJobs(count){
+  visibleJobs=Math.max(1,Math.min(10,count));
+  document.querySelectorAll("#jobsBody tr").forEach((tr,i)=>{
+    tr.classList.toggle("job-row-hidden", i>=visibleJobs);
+  });
+  document.querySelectorAll("#jobsMobile .job-card").forEach((card,i)=>{
+    card.style.display = i<visibleJobs ? "" : "none";
+  });
+  const btn=document.getElementById("addJobBtn");
+  if(btn){
+    btn.disabled=visibleJobs>=10;
+    btn.style.opacity=visibleJobs>=10 ? ".45" : "1";
+  }
+}
+
+function addJob(){
+  if(visibleJobs<10){
+    setVisibleJobs(visibleJobs+1);
+    const row=document.querySelectorAll("#jobsBody tr")[visibleJobs-1];
+    const input=row?.querySelector(".jobname");
+    if(input) input.focus();
+  }
+}
+
+document.getElementById("addJobBtn").addEventListener("click",addJob);
+setVisibleJobs(1);
+
+function syncMobileJobs(){
+  const desktopRows=[...document.querySelectorAll("#jobsBody tr")];
+  const mobileRows=[...document.querySelectorAll(".job-card")];
+  mobileRows.forEach((card,i)=>{
+    const desktop=desktopRows[i];
+    if(!desktop)return;
+    const dname=desktop.querySelector(".jobname");
+    const mname=card.querySelector(".mobile-jobname");
+    if(document.activeElement!==dname) mname.value=dname.value;
+    card.querySelectorAll(".mobile-jobhour").forEach((m,k)=>{
+      const d=desktop.querySelectorAll(".jobhour")[k];
+      if(document.activeElement!==d) m.value=d.value;
+    });
+    const total=[...card.querySelectorAll(".mobile-jobhour")].reduce((s,e)=>s+val(e),0);
+    card.querySelector(".mobile-jobtotal").textContent=fmt(total);
+  });
+}
+
+function syncDesktopFromMobile(){
+  document.querySelectorAll(".job-card").forEach((card,i)=>{
+    const desktop=document.querySelectorAll("#jobsBody tr")[i];
+    if(!desktop)return;
+    desktop.querySelector(".jobname").value=card.querySelector(".mobile-jobname").value;
+    card.querySelectorAll(".mobile-jobhour").forEach((m,k)=>{
+      desktop.querySelectorAll(".jobhour")[k].value=m.value;
+    });
+  });
+  calc();
+}
+document.addEventListener("input",e=>{
+  if(e.target.classList.contains("mobile-jobname") || e.target.classList.contains("mobile-jobhour")){
+    syncDesktopFromMobile();
+    syncMobileJobs();
+  }
+});
+
+
+abs.innerHTML=absenceTypes.map((name,i)=>`<tr>
+  <td>${name}</td>
+  ${Array.from({length:6},(_,d)=>`<td><input class="num absenceHour a${i}" data-day="${d}" type="text" inputmode="decimal" value="0"></td>`).join("")}
+  <td class="total at${i}">0</td>
+</tr>`).join("");
+
+function val(el){return parseFloat(String(el.value).replace(",", "."))||0}
+function fmt(n){return Number.isInteger(n)?String(n):n.toFixed(2).replace(/0+$/,"").replace(/\.$/,"")}
+function contractSchedule(){
+  return [...document.querySelectorAll(".plannedInput")].map(el=>val(el));
+}
+function calc(){
+  const schedule=contractSchedule();
   const contract=schedule.reduce((a,b)=>a+b,0);
   const contractField=document.getElementById("contracturen");
   // Contracturen is a separate, manually editable field.
